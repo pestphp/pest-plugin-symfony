@@ -23,12 +23,12 @@ class Kernel extends BaseKernel
 
     public function getCacheDir(): string
     {
-        return \dirname(__DIR__ . '/var/cache');
+        return \dirname(__DIR__, 2) . '/var/cache';
     }
 
     public function getLogDir(): string
     {
-        return \dirname(__DIR__ . '/var/log');
+        return \dirname(__DIR__, 2) . '/var/log';
     }
 
     protected function configureContainer(ContainerConfigurator $container): void

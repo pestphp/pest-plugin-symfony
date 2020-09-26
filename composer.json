@@ -22,7 +22,7 @@
             "Pest\\Symfony\\": "src/"
         },
         "files": [
-            "src/Autoload.php"
+            "src/App.php"
         ]
     },
     "autoload-dev": {
