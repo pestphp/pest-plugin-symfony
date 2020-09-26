@@ -3,9 +3,14 @@
          xsi:noNamespaceSchemaLocation="./vendor/phpunit/phpunit/phpunit.xsd"
          colors="true"
 >
+    <php>
+        <ini name="error_reporting" value="-1" />
+        <server name="APP_ENV" value="test" force="true" />
+        <server name="SHELL_VERBOSITY" value="-1" />
+    </php>
     <testsuites>
         <testsuite name="default">
-            <directory suffix=".php">./tests</directory>
+            <directory suffix=".php">./tests/plugin</directory>
         </testsuite>
     </testsuites>
     <coverage processUncoveredFiles="true">
