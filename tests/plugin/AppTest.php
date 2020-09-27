@@ -3,13 +3,13 @@
 namespace Pest\Symfony\Tests\Plugin;
 
 use function Pest\Symfony\app;
-use Pest\Symfony\Tests\App\Kernel;
 use function PHPUnit\Framework\assertInstanceOf;
 use function PHPUnit\Framework\assertNotSame;
 use function PHPUnit\Framework\assertSame;
+use Symfony\Component\HttpKernel\KernelInterface;
 
 it('instanciates the app', function () {
-    assertInstanceOf(Kernel::class, app());
+    assertInstanceOf(KernelInterface::class, app());
 });
 
 it('returns a shared instance of the app by default', function () {

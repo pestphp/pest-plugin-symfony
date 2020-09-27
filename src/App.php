@@ -4,29 +4,47 @@ declare(strict_types=1);
 
 namespace Pest\Symfony;
 
+use LogicException;
+use Pest\Exceptions\ShouldNotHappen;
+use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\DependencyInjection\ContainerInterface;
-use Symfony\Component\HttpKernel\Kernel;
+use Symfony\Component\HttpKernel\KernelInterface;
 
-function app(bool $reInstanciate = false): Kernel
+function app(bool $reInstanciate = false): KernelInterface
 {
     static $kernel;
 
     if (null === $kernel || $reInstanciate) {
-        $env    = $_ENV['APP_ENV'] ?? $_SERVER['APP_ENV'] ?? 'test';
-        $debug  = $_ENV['APP_DEBUG'] ?? $_SERVER['APP_DEBUG'] ?? true;
+        // @phpstan-ignore-next-line
+        $testCase = new class() extends KernelTestCase {
+            public function getKernel(): KernelInterface
+            {
+                self::bootKernel();
 
-        $kernelClass = Plugin::getKernelClass();
-        $kernel      = new $kernelClass((string) $env, (bool) $debug);
-        $kernel->boot();
+                return self::$kernel;
+            }
+        };
+        $kernel = $testCase->getKernel();
     }
 
     return $kernel;
 }
 
-function container(?Kernel $app = null): ContainerInterface
+/**
+ * @phpstan-ignore-next-line
+ */
+function container(?KernelInterface $app = null): ContainerInterface
 {
-    $app        = $app ?? app();
-    $container  = $app->getContainer();
+    $app       = $app ?? app();
+    $container = $app->getContainer();
 
-    return $container->has('test.service_container') ? $container->get('test.service_container') : $container;
+    if ($container->has('test.service_container')) {
+        $container = $container->get('test.service_container');
+    }
+
+    if (!$container instanceof ContainerInterface) {
+        throw new ShouldNotHappen(new LogicException('Unable to retrieve ContainerInterface'));
+    }
+
+    return $container;
 }
