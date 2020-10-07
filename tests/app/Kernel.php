@@ -4,17 +4,11 @@ declare(strict_types=1);
 
 namespace Pest\Symfony\Tests\App;
 
-use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
 use Symfony\Component\Config\Loader\LoaderInterface;
+use Symfony\Component\Config\Resource\FileResource;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
-use Symfony\Component\DependencyInjection\Loader\Configurator\AbstractConfigurator;
-use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
-use Symfony\Component\DependencyInjection\Loader\PhpFileLoader as ContainerPhpFileLoader;
-use Symfony\Component\DependencyInjection\Reference;
+use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpKernel\Kernel as BaseKernel;
-use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
-use Symfony\Component\Routing\Loader\PhpFileLoader as RoutingPhpFileLoader;
-use Symfony\Component\Routing\RouteCollection;
 use Symfony\Component\Routing\RouteCollectionBuilder;
 
 /**
@@ -22,6 +16,8 @@ use Symfony\Component\Routing\RouteCollectionBuilder;
  */
 class Kernel extends BaseKernel
 {
+    private const CONFIG_EXTS = '.{php,xml,yaml,yml}';
+
     public function getProjectDir(): string
     {
         return __DIR__;
@@ -37,37 +33,9 @@ class Kernel extends BaseKernel
         return \dirname(__DIR__, 2) . '/var/log';
     }
 
-    protected function configureContainer(ContainerConfigurator $container): void
-    {
-        $container->import('./config/{packages}/*.yaml');
-        $container->import('./config/{packages}/' . $this->environment . '/*.yaml');
-
-        if (is_file(\dirname(__DIR__) . '/config/services.yaml')) {
-            $container->import('./config/{services}.yaml');
-            $container->import('./config/{services}_' . $this->environment . '.yaml');
-        } elseif (is_file($path = \dirname(__DIR__) . '/config/services.php')) {
-            (require $path)($container->withPath($path), $this);
-        }
-    }
-
-    protected function configureRoutes(RoutingConfigurator $routes): void
-    {
-        $routes->import('./config/{routes}/' . $this->environment . '/*.yaml');
-        $routes->import('./config/{routes}/*.yaml');
-
-        if (is_file(\dirname(__DIR__) . '/config/routes.yaml')) {
-            $routes->import('./config/{routes}.yaml');
-        } elseif (is_file($path = \dirname(__DIR__) . '/config/routes.php')) {
-            (require $path)($routes->withPath($path), $this);
-        }
-    }
-
-    /**
-     * {@inheritdoc}
-     */
     public function registerBundles(): iterable
     {
-        $contents = require $this->getProjectDir() . '/config/bundles.php';
+        $contents = require __DIR__ . '/config/bundles.php';
         foreach ($contents as $class => $envs) {
             if ($envs[$this->environment] ?? $envs['all'] ?? false) {
                 yield new $class();
@@ -75,10 +43,7 @@ class Kernel extends BaseKernel
         }
     }
 
-    /**
-     * {@inheritdoc}
-     */
-    public function registerContainerConfiguration(LoaderInterface $loader): void
+    public function registerContainerConfiguration(LoaderInterface $loader)
     {
         $loader->load(function (ContainerBuilder $container) use ($loader) {
             $container->loadFromExtension('framework', [
@@ -88,12 +53,8 @@ class Kernel extends BaseKernel
                 ],
             ]);
 
-            $kernelClass = false !== strpos(static::class, "@anonymous\0") ? parent::class : static::class;
-
             if (!$container->hasDefinition('kernel')) {
-                $container->register('kernel', $kernelClass)
-                    ->addTag('controller.service_arguments')
-                    ->setAutoconfigured(true)
+                $container->register('kernel', static::class)
                     ->setSynthetic(true)
                     ->setPublic(true)
                 ;
@@ -102,84 +63,46 @@ class Kernel extends BaseKernel
             $kernelDefinition = $container->getDefinition('kernel');
             $kernelDefinition->addTag('routing.route_loader');
 
+            if ($this instanceof EventSubscriberInterface) {
+                $kernelDefinition->addTag('kernel.event_subscriber');
+            }
+
+            $this->configureContainer($container, $loader);
+
             $container->addObjectResource($this);
-            $container->fileExists($this->getProjectDir() . '/config/bundles.php');
-
-            try {
-                $configureContainer = new \ReflectionMethod($this, 'configureContainer');
-            } catch (\ReflectionException $e) {
-                throw new \LogicException(sprintf('"%s" uses "%s", but does not implement the required method "protected function configureContainer(ContainerConfigurator $c): void".', get_debug_type($this), MicroKernelTrait::class), 0, $e);
-            }
-
-            $configuratorClass = $configureContainer->getNumberOfParameters() > 0 && ($type = $configureContainer->getParameters()[0]->getType()) instanceof \ReflectionNamedType && !$type->isBuiltin() ? $type->getName() : null;
-
-            if ($configuratorClass && !is_a(ContainerConfigurator::class, $configuratorClass, true)) {
-                $this->configureContainer($container, $loader);
-
-                return;
-            }
-
-            // the user has opted into using the ContainerConfigurator
-            /* @var ContainerPhpFileLoader $kernelLoader */
-            $kernelLoader = $loader->getResolver()->resolve($file = $configureContainer->getFileName());
-            $kernelLoader->setCurrentDir(\dirname($file));
-            $instanceof = &\Closure::bind(function &() { return $this->instanceof; }, $kernelLoader, $kernelLoader)();
-
-            $valuePreProcessor = AbstractConfigurator::$valuePreProcessor;
-            AbstractConfigurator::$valuePreProcessor = function ($value) {
-                return $this === $value ? new Reference('kernel') : $value;
-            };
-
-            try {
-                $this->configureContainer(new ContainerConfigurator($container, $kernelLoader, $instanceof, $file, $file), $loader);
-            } finally {
-                $instanceof = [];
-                $kernelLoader->registerAliasesForSinglyImplementedInterfaces();
-                AbstractConfigurator::$valuePreProcessor = $valuePreProcessor;
-            }
-
-            $container->setAlias($kernelClass, 'kernel')->setPublic(true);
         });
     }
 
     /**
      * @internal
      */
-    public function loadRoutes(LoaderInterface $loader): RouteCollection
+    public function loadRoutes(LoaderInterface $loader)
     {
-        $file = (new \ReflectionObject($this))->getFileName();
-        /* @var RoutingPhpFileLoader $kernelLoader */
-        $kernelLoader = $loader->getResolver()->resolve($file);
-        $kernelLoader->setCurrentDir(\dirname($file));
-        $collection = new RouteCollection();
+        $routes = new RouteCollectionBuilder($loader);
+        $this->configureRoutes($routes);
 
-        try {
-            $configureRoutes = new \ReflectionMethod($this, 'configureRoutes');
-        } catch (\ReflectionException $e) {
-            throw new \LogicException(sprintf('"%s" uses "%s", but does not implement the required method "protected function configureRoutes(RoutingConfigurator $routes): void".', get_debug_type($this), MicroKernelTrait::class), 0, $e);
-        }
+        return $routes->build();
+    }
 
-        $configuratorClass = $configureRoutes->getNumberOfParameters() > 0 && ($type = $configureRoutes->getParameters()[0]->getType()) && !$type->isBuiltin() ? $type->getName() : null;
+    protected function configureContainer(ContainerBuilder $container, LoaderInterface $loader): void
+    {
+        $container->addResource(new FileResource($this->getProjectDir() . '/config/bundles.php'));
+        $container->setParameter('container.dumper.inline_class_loader', \PHP_VERSION_ID < 70400 || $this->debug);
+        $container->setParameter('container.dumper.inline_factories', true);
+        $confDir = $this->getProjectDir() . '/config';
 
-        if ($configuratorClass && !is_a(RoutingConfigurator::class, $configuratorClass, true)) {
-            trigger_deprecation('symfony/framework-bundle', '5.1', 'Using type "%s" for argument 1 of method "%s:configureRoutes()" is deprecated, use "%s" instead.', RouteCollectionBuilder::class, self::class, RoutingConfigurator::class);
+        $loader->load($confDir . '/{packages}/*' . self::CONFIG_EXTS, 'glob');
+        $loader->load($confDir . '/{packages}/' . $this->environment . '/*' . self::CONFIG_EXTS, 'glob');
+        $loader->load($confDir . '/{services}' . self::CONFIG_EXTS, 'glob');
+        $loader->load($confDir . '/{services}_' . $this->environment . self::CONFIG_EXTS, 'glob');
+    }
 
-            $routes = new RouteCollectionBuilder($loader);
-            $this->configureRoutes($routes);
+    protected function configureRoutes(RouteCollectionBuilder $routes): void
+    {
+        $confDir = $this->getProjectDir() . '/config';
 
-            return $routes->build();
-        }
-
-        $this->configureRoutes(new RoutingConfigurator($collection, $kernelLoader, $file, $file));
-
-        foreach ($collection as $route) {
-            $controller = $route->getDefault('_controller');
-
-            if (\is_array($controller) && [0, 1] === array_keys($controller) && $this === $controller[0]) {
-                $route->setDefault('_controller', ['kernel', $controller[1]]);
-            }
-        }
-
-        return $collection;
+        $routes->import($confDir . '/{routes}/' . $this->environment . '/*' . self::CONFIG_EXTS, '/', 'glob');
+        $routes->import($confDir . '/{routes}/*' . self::CONFIG_EXTS, '/', 'glob');
+        $routes->import($confDir . '/{routes}' . self::CONFIG_EXTS, '/', 'glob');
     }
 }
