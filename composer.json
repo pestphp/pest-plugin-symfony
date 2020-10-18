@@ -24,7 +24,8 @@
             "Pest\\Symfony\\": "src/"
         },
         "files": [
-            "src/App.php"
+            "src/App.php",
+            "src/Validator.php"
         ]
     },
     "autoload-dev": {
@@ -35,6 +36,7 @@
     },
     "require-dev": {
         "pestphp/pest-dev-tools": "dev-master",
+        "symfony/validator": "^5.0",
         "symfony/yaml": "^5.0"
     },
     "extra": {
