@@ -4,10 +4,7 @@ declare(strict_types=1);
 
 namespace Pest\Symfony;
 
-use function PHPUnit\Framework\assertContains;
-use function PHPUnit\Framework\assertCount;
-use function PHPUnit\Framework\assertEquals;
-use function PHPUnit\Framework\assertNotCount;
+use LogicException;
 use PHPUnit\Framework\ExpectationFailedException;
 use Symfony\Component\Validator\ConstraintViolationInterface;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
@@ -24,13 +21,17 @@ use Symfony\Component\Validator\Validator\ValidatorInterface;
  */
 function assertViolated($expected, $subject, ?string $propertyPath = null): void
 {
+    if (!interface_exists(ValidatorInterface::class)) {
+        throw new LogicException('You need the Validator cmponent to use this feature. Try running `composer require symfony/validator`.');
+    }
+
     /** @var ValidatorInterface $validator */
     $validator  = container()->get(ValidatorInterface::class);
-    $violations = \iterator_to_array($validator->validate($subject));
+    $violations = iterator_to_array($validator->validate($subject));
 
     // Check against a specitic property path
     if (null !== $propertyPath) {
-        $violations = \array_filter(
+        $violations = array_filter(
             $violations,
             function (ConstraintViolationInterface $violation) use ($propertyPath): bool {
                 return $propertyPath === $violation->getPropertyPath();
@@ -39,21 +40,25 @@ function assertViolated($expected, $subject, ?string $propertyPath = null): void
     }
 
     // Do not care about the exact number of violations
-    if (\is_bool($expected)) {
-        $expected ? assertNotCount(0, $violations) : assertCount(0, $violations);
+    if (is_bool($expected)) {
+        if ($expected) {
+            expect($violations)->not()->toHaveCount(0);
+        } else {
+            expect($violations)->toHaveCount(0);
+        }
 
         return;
     }
 
     // Check the exact number of violations
-    if (\is_int($expected)) {
-        assertCount($expected, $violations);
+    if (is_int($expected)) {
+        expect($violations)->toHaveCount($expected);
 
         return;
     }
 
     // Check a specific violation message is returned
-    $violationMessages = \array_map(
+    $violationMessages = array_map(
         function (ConstraintViolationInterface $violation): string {
             return $violation->getPropertyPath() . ': ' . $violation->getMessage();
         },
@@ -61,8 +66,8 @@ function assertViolated($expected, $subject, ?string $propertyPath = null): void
     );
 
     try {
-        assertContains($expected, $violationMessages);
+        expect($violationMessages)->toContain($expected);
     } catch (ExpectationFailedException $e) {
-        assertEquals([$expected], $violationMessages, 'Violation not found.');
+        expect($violationMessages)->toEqual([$expected]);
     }
 }
